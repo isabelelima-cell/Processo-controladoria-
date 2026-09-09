@@ -3,11 +3,17 @@ import re
 import unicodedata
 from typing import Dict, List, Optional, Tuple
 
-import pandas as pd
 import streamlit as st
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
+
+try:
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_OK = True
+    OPENPYXL_IMPORT_ERROR = ""
+except ImportError as exc:
+    OPENPYXL_OK = False
+    OPENPYXL_IMPORT_ERROR = str(exc)
 
 
 # ============================================================
@@ -19,6 +25,14 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
+
+if not OPENPYXL_OK:
+    st.error(
+        "A dependência openpyxl não foi instalada no ambiente. "
+        "Confirme se o arquivo requirements.txt está no mesmo "
+        "repositório do app.py. Detalhes: " + OPENPYXL_IMPORT_ERROR
+    )
+    st.stop()
 
 
 # ============================================================
@@ -999,21 +1013,20 @@ def create_audit_excel(
 # FUNÇÕES DE VISUALIZAÇÃO
 # ============================================================
 
-def records_to_dataframe(
+def prepare_table_records(
     records: List[dict],
     columns: List[str],
-) -> pd.DataFrame:
-
-    if not records:
-        return pd.DataFrame(
-            columns=columns
-        )
-
-    return pd.DataFrame(
-        records,
-        columns=columns,
-    )
-
+    limit: Optional[int] = None,
+) -> List[dict]:
+    """
+    Prepara registros para exibição no Streamlit sem depender
+    diretamente de pandas.
+    """
+    selected = records if limit is None else records[:limit]
+    return [
+        {column: record.get(column, "") for column in columns}
+        for record in selected
+    ]
 
 def clear_previous_result():
     """
@@ -1269,7 +1282,7 @@ if "summary_records" in st.session_state:
         "📋 Relatório das abas"
     )
 
-    report_df = records_to_dataframe(
+    report_table = prepare_table_records(
         sheet_reports,
         [
             "ABA",
@@ -1283,7 +1296,7 @@ if "summary_records" in st.session_state:
     )
 
     st.dataframe(
-        report_df,
+        report_table,
         use_container_width=True,
         hide_index=True,
     )
@@ -1296,13 +1309,14 @@ if "summary_records" in st.session_state:
         "📊 Prévia do Resumo Geral"
     )
 
-    summary_df = records_to_dataframe(
+    summary_table = prepare_table_records(
         summary_records,
         OUTPUT_COLUMNS,
+        limit=100,
     )
 
     st.dataframe(
-        summary_df.head(100),
+        summary_table,
         use_container_width=True,
         hide_index=True,
     )
@@ -1338,50 +1352,32 @@ if "summary_records" in st.session_state:
             "PLACA",
         ]
 
-        trace_df = records_to_dataframe(
-            trace_records,
-            trace_columns,
-        )
-
         search_os = st.text_input(
             "Pesquisar O.S VIAG ou O.S FECH",
             placeholder="Ex.: 14030",
         )
 
         if search_os.strip():
+            query = normalize_text(search_os)
+            filtered_trace_records = []
 
-            query = normalize_text(
-                search_os
-            )
+            for record in trace_records:
+                os_viag = normalize_text(record.get("O.S VIAG", ""))
+                os_fech = normalize_text(record.get("O.S FECH", ""))
 
-            mask = (
-                trace_df["O.S VIAG"]
-                .astype(str)
-                .map(normalize_text)
-                .str.contains(
-                    query,
-                    na=False,
-                )
-                |
-                trace_df["O.S FECH"]
-                .astype(str)
-                .map(normalize_text)
-                .str.contains(
-                    query,
-                    na=False,
-                )
-            )
-
-            filtered_trace = trace_df[
-                mask
-            ]
-
+                if query in os_viag or query in os_fech:
+                    filtered_trace_records.append(record)
         else:
+            filtered_trace_records = trace_records
 
-            filtered_trace = trace_df
+        trace_table = prepare_table_records(
+            filtered_trace_records,
+            trace_columns,
+            limit=300,
+        )
 
         st.dataframe(
-            filtered_trace.head(300),
+            trace_table,
             use_container_width=True,
             hide_index=True,
         )
@@ -1394,7 +1390,7 @@ if "summary_records" in st.session_state:
         "🧭 Ver mapeamento dos cabeçalhos"
     ):
 
-        mapping_df = records_to_dataframe(
+        mapping_table = prepare_table_records(
             mapping_records,
             [
                 "ABA",
@@ -1407,7 +1403,7 @@ if "summary_records" in st.session_state:
         )
 
         st.dataframe(
-            mapping_df,
+            mapping_table,
             use_container_width=True,
             hide_index=True,
         )
