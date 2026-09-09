@@ -297,8 +297,41 @@ def process_workbook(
     - avisos encontrados.
     """
 
+    # -------------------------------------------------------------
+    # LER O EXCEL SOMENTE COM OS RESULTADOS DAS FÓRMULAS
+    # -------------------------------------------------------------
+    #
+    # data_only=True faz com que:
+    #   célula normal  -> copie o valor da célula
+    #   célula fórmula -> copie somente o resultado salvo da fórmula
+    #
+    # Exemplo:
+    #   fórmula original: =K10+L10
+    #   valor exibido:    1250
+    #   valor importado:  1250
+    #
+    # A fórmula NÃO é levada para a planilha final.
+    # -------------------------------------------------------------
+
+    original_bytes = uploaded_file.getvalue()
+
+    values_workbook = load_workbook(
+        io.BytesIO(original_bytes),
+        data_only=True,
+    )
+
+    # Salva uma cópia interna contendo apenas os valores já
+    # calculados/salvos no arquivo original.
+    values_buffer = io.BytesIO()
+
+    values_workbook.save(
+        values_buffer
+    )
+
+    values_buffer.seek(0)
+
     excel_file = pd.ExcelFile(
-        uploaded_file,
+        values_buffer,
         engine="openpyxl",
     )
 
@@ -738,6 +771,8 @@ with st.expander(
 - `FRANQUINA` também é reconhecida como `FRANQUIA`.
 - Se uma coluna não existir em determinada aba, ela fica **em branco**.
 - Nenhum valor financeiro, placa, transportador ou outro dado é inventado ou calculado.
+- Se uma célula tiver **fórmula**, somente o **resultado calculado salvo na célula** é importado; a fórmula não é copiada.
+- A planilha gerada contém somente valores, como um **colar somente valores** do Excel.
 - Linhas totalmente vazias são descartadas.
         """
     )
