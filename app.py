@@ -41,7 +41,7 @@ if not OPENPYXL_OK:
 
 # Quantas linhas do início de cada aba serão analisadas
 # para descobrir onde está o cabeçalho.
-MAX_HEADER_SCAN_ROWS = 50
+MAX_HEADER_SCAN_ROWS = 10
 
 # Para considerar que uma linha é realmente um cabeçalho,
 # ela deve possuir pelo menos esta quantidade de campos reconhecidos.
