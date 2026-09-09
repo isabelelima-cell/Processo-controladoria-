@@ -284,6 +284,245 @@ def detect_header_row(
     return best_row, best_score
 
 
+
+def is_blank_cell(value) -> bool:
+    """
+    Diz se uma célula está realmente vazia.
+
+    Zero é considerado valor existente.
+    """
+    if value is None:
+        return True
+
+    if isinstance(value, str):
+        return value.strip() == ""
+
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def to_number(value) -> float:
+    """
+    Converte um valor para número somente para os cálculos
+    de FRETE SEM DESCONTO e TOTAL COM DESCONTO.
+
+    Aceita:
+    - números do Excel;
+    - valores como 1234,56;
+    - valores como 1.234,56;
+    - valores com R$;
+    - valores negativos.
+
+    Se a célula estiver vazia, considera 0 somente na conta.
+    A célula original não é alterada.
+    """
+    if is_blank_cell(value):
+        return 0.0
+
+    if isinstance(value, bool):
+        return float(value)
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    text = text.replace("\xa0", " ")
+    text = text.replace("R$", "")
+    text = text.replace(" ", "")
+
+    negative_parentheses = (
+        text.startswith("(")
+        and text.endswith(")")
+    )
+
+    if negative_parentheses:
+        text = text[1:-1]
+
+    # Mantém somente caracteres que podem compor um número.
+    text = re.sub(r"[^0-9,.\-+]", "", text)
+
+    if not text:
+        return 0.0
+
+    # Padrão brasileiro: 1.234,56
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "")
+            text = text.replace(",", ".")
+        else:
+            # Ex.: 1,234.56
+            text = text.replace(",", "")
+
+    elif "," in text:
+        # Ex.: 1234,56
+        text = text.replace(".", "")
+        text = text.replace(",", ".")
+
+    elif "." in text:
+        # Se houver vários pontos, considera-os separadores
+        # de milhar, preservando o último apenas quando fizer
+        # sentido como decimal.
+        parts = text.split(".")
+
+        if len(parts) > 2:
+            if len(parts[-1]) in (1, 2):
+                text = "".join(parts[:-1]) + "." + parts[-1]
+            else:
+                text = "".join(parts)
+
+        elif len(parts) == 2:
+            # No padrão brasileiro, "1.234" normalmente significa
+            # mil duzentos e trinta e quatro.
+            if len(parts[-1]) == 3 and parts[0].lstrip("+-").isdigit():
+                text = "".join(parts)
+
+    try:
+        number = float(text)
+    except ValueError:
+        return 0.0
+
+    if negative_parentheses:
+        number *= -1
+
+    return number
+
+
+def clean_calculated_number(value: float):
+    """
+    Evita resíduos de ponto flutuante como 1199.9999999998.
+    Mantém o resultado como número, não como fórmula.
+    """
+    rounded = round(float(value), 10)
+
+    if rounded == int(rounded):
+        return int(rounded)
+
+    return rounded
+
+
+def calculate_export_values(
+    final_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Recalcula APENAS:
+    - FRETE SEM DESCONTO
+    - TOTAL COM DESCONTO
+
+    Os cálculos são feitos depois que todas as abas já foram
+    consolidadas.
+
+    Sem KM TOTAL:
+        FRETE SEM DESCONTO =
+            FRETE SAÍDA
+            + PEDÁGIO
+            + OUTROS CRÉDITOS
+
+    Com KM TOTAL:
+        FRETE SEM DESCONTO =
+            FRETE SAÍDA
+            + (ADC (KM * FRANQUIA)
+            + PEDÁGIO
+            + OUTROS CRÉDITOS
+
+    Para todas as linhas:
+        TOTAL COM DESCONTO =
+            FRETE SEM DESCONTO
+            + DESCONTO
+            + ABASTECIMENTO
+
+    Importante:
+    - valores vazios entram como 0 somente na conta;
+    - DESCONTO e ABASTECIMENTO são somados exatamente com
+      o sinal que possuírem na planilha;
+    - nenhuma fórmula é gravada no arquivo final.
+    """
+
+    if final_df.empty:
+        return final_df
+
+    final_df = final_df.copy()
+
+    for row_index, row in final_df.iterrows():
+
+        frete_saida = to_number(
+            row.get("FRETE SAÍDA", "")
+        )
+
+        pedagio = to_number(
+            row.get("PEDÁGIO", "")
+        )
+
+        outros_creditos = to_number(
+            row.get("OUTROS CRÉDITOS", "")
+        )
+
+        desconto = to_number(
+            row.get("DESCONTO", "")
+        )
+
+        abastecimento = to_number(
+            row.get("ABASTECIMENTO", "")
+        )
+
+        km_total = row.get(
+            "KM TOTAL",
+            "",
+        )
+
+        tem_km_total = not is_blank_cell(
+            km_total
+        )
+
+        if tem_km_total:
+
+            adc_km = to_number(
+                row.get("ADC (KM", "")
+            )
+
+            franquia = to_number(
+                row.get("FRANQUIA", "")
+            )
+
+            frete_sem_desconto = (
+                frete_saida
+                + (adc_km * franquia)
+                + pedagio
+                + outros_creditos
+            )
+
+        else:
+
+            frete_sem_desconto = (
+                frete_saida
+                + pedagio
+                + outros_creditos
+            )
+
+        total_com_desconto = (
+            frete_sem_desconto
+            + desconto
+            + abastecimento
+        )
+
+        final_df.at[
+            row_index,
+            "FRETE SEM DESCONTO",
+        ] = clean_calculated_number(
+            frete_sem_desconto
+        )
+
+        final_df.at[
+            row_index,
+            "TOTAL COM DESCONTO",
+        ] = clean_calculated_number(
+            total_com_desconto
+        )
+
+    return final_df
+
+
 def process_workbook(
     uploaded_file,
 ) -> Tuple[pd.DataFrame, List[dict], List[str], List[str]]:
@@ -320,6 +559,14 @@ def process_workbook(
         data_only=True,
     )
 
+    # Identifica abas ocultas antes do processamento.
+    # hidden e veryHidden não serão processadas.
+    hidden_sheet_names = {
+        worksheet.title
+        for worksheet in values_workbook.worksheets
+        if worksheet.sheet_state != "visible"
+    }
+
     # Salva uma cópia interna contendo apenas os valores já
     # calculados/salvos no arquivo original.
     values_buffer = io.BytesIO()
@@ -343,11 +590,34 @@ def process_workbook(
     for sheet_name in excel_file.sheet_names:
 
         # ---------------------------------------------------------
-        # 1. IGNORAR ABAS DE RESUMO
+        # 1. IGNORAR ABAS OCULTAS E ABAS DE RESUMO
         # ---------------------------------------------------------
 
+        if sheet_name in hidden_sheet_names:
+
+            ignored_sheets.append(
+                f"{sheet_name} (oculta)"
+            )
+
+            report.append(
+                {
+                    "Aba": sheet_name,
+                    "Status": "Ignorada: aba oculta",
+                    "Linhas importadas": 0,
+                    "Colunas encontradas": 0,
+                    "Colunas ausentes": 0,
+                    "Ausentes": "-",
+                }
+            )
+
+            continue
+
         if is_summary_sheet(sheet_name):
-            ignored_sheets.append(sheet_name)
+
+            ignored_sheets.append(
+                f"{sheet_name} (resumo)"
+            )
+
             continue
 
         # ---------------------------------------------------------
@@ -595,6 +865,21 @@ def process_workbook(
             OUTPUT_COLUMNS
         ]
 
+        # ---------------------------------------------------------
+        # 11. RECALCULAR OS VALORES DEPOIS DA CONSOLIDAÇÃO
+        # ---------------------------------------------------------
+        #
+        # Somente estas duas colunas são recalculadas:
+        # - FRETE SEM DESCONTO
+        # - TOTAL COM DESCONTO
+        #
+        # O resultado é gravado como número, nunca como fórmula.
+        # ---------------------------------------------------------
+
+        final_df = calculate_export_values(
+            final_df
+        )
+
     else:
 
         final_df = pd.DataFrame(
@@ -750,7 +1035,7 @@ st.title(
 st.write(
     "Envie a planilha original. "
     "O sistema percorrerá as abas de vencimento, "
-    "ignorará abas de resumo e criará uma única "
+    "ignorará abas ocultas e de resumo e criará uma única "
     "planilha consolidada."
 )
 
@@ -762,6 +1047,7 @@ with st.expander(
     st.markdown(
         """
 - O cabeçalho é procurado automaticamente nas **10 primeiras linhas** de cada aba.
+- Abas **ocultas** não são processadas.
 - Abas com **Resumo** no nome são ignoradas.
 - Maiúsculas/minúsculas, acentos, espaços e pontuação do cabeçalho são ignorados na comparação.
 - `TRANSPORTADOR/MOTORISTA` é tratado como `TRANSPORTADOR`.
@@ -770,9 +1056,13 @@ with st.expander(
 - `OBSERVAÇÃO` é tratada como `MOTIVO`.
 - `FRANQUINA` também é reconhecida como `FRANQUIA`.
 - Se uma coluna não existir em determinada aba, ela fica **em branco**.
-- Nenhum valor financeiro, placa, transportador ou outro dado é inventado ou calculado.
-- Se uma célula tiver **fórmula**, somente o **resultado calculado salvo na célula** é importado; a fórmula não é copiada.
-- A planilha gerada contém somente valores, como um **colar somente valores** do Excel.
+- Os dados da origem são copiados como valores; fórmulas da planilha original não são levadas para o arquivo final.
+- Depois da consolidação, somente `FRETE SEM DESCONTO` e `TOTAL COM DESCONTO` são recalculados.
+- Sem `KM TOTAL`: `FRETE SEM DESCONTO = FRETE SAÍDA + PEDÁGIO + OUTROS CRÉDITOS`.
+- Com `KM TOTAL`: `FRETE SEM DESCONTO = FRETE SAÍDA + (ADC (KM × FRANQUIA) + PEDÁGIO + OUTROS CRÉDITOS`.
+- Para todas as linhas: `TOTAL COM DESCONTO = FRETE SEM DESCONTO + DESCONTO + ABASTECIMENTO`.
+- Células vazias são consideradas `0` somente durante esses cálculos.
+- A planilha gerada contém somente valores, sem fórmulas.
 - Linhas totalmente vazias são descartadas.
         """
     )
@@ -903,7 +1193,7 @@ if "final_df" in st.session_state:
     )
 
     col3.metric(
-        "Abas de resumo ignoradas",
+        "Abas ignoradas",
         len(ignored_sheets),
     )
 
