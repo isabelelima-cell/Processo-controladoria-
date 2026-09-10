@@ -1754,10 +1754,18 @@ def process_accounting_sheet(
             )
         )
 
+        # Cria a coluna como object para aceitar datas reais,
+        # textos vazios e outros tipos sem conflito de dtype.
+        vencimento_values = pd.Series(
+            [None] * len(df),
+            index=df.index,
+            dtype=object,
+        )
+
         df.insert(
             historico_position + 1,
             "VENCIMENTO",
-            "",
+            vencimento_values,
         )
 
         vencimento_column = (
@@ -1767,6 +1775,13 @@ def process_accounting_sheet(
     else:
         vencimento_column = (
             vencimento_existing
+        )
+
+        # Garante que uma coluna VENCIMENTO já existente também
+        # aceite datas do consolidado sem erro de dtype.
+        df[vencimento_column] = (
+            df[vencimento_column]
+            .astype(object)
         )
 
     # OBSERVAÇÃO ao final, se ainda não existir.
