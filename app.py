@@ -894,6 +894,20 @@ def process_workbook(
     )
 
 
+def motivo_indica_abastecimento(value) -> bool:
+    """
+    Retorna True quando o campo MOTIVO contém
+    'abastecimento' ou 'combustível', ignorando
+    maiúsculas/minúsculas, acentos e pontuação.
+    """
+    normalized = normalize_text(value)
+
+    return (
+        "abastecimento" in normalized
+        or "combustivel" in normalized
+    )
+
+
 def dataframe_to_excel_bytes(
     df: pd.DataFrame,
 ) -> bytes:
@@ -959,6 +973,87 @@ def dataframe_to_excel_bytes(
             horizontal="center",
             vertical="center",
         )
+
+    # -------------------------------------------------------------
+    # DESTACAR MOTIVO QUANDO HOUVER ABASTECIMENTO SEM JUSTIFICATIVA
+    # -------------------------------------------------------------
+    #
+    # Regra:
+    # - Se ABASTECIMENTO tiver um número;
+    # - e MOTIVO estiver vazio OU não contiver
+    #   "abastecimento" ou "combustível";
+    # - pintar somente a célula MOTIVO de amarelo.
+    #
+    # Nenhum valor é alterado.
+    # -------------------------------------------------------------
+
+    abastecimento_col_idx = OUTPUT_COLUMNS.index(
+        "ABASTECIMENTO"
+    ) + 1
+
+    motivo_col_idx = OUTPUT_COLUMNS.index(
+        "MOTIVO"
+    ) + 1
+
+    yellow_fill = PatternFill(
+        fill_type="solid",
+        fgColor="FFFF00",
+    )
+
+    for row_idx in range(
+        2,
+        worksheet.max_row + 1,
+    ):
+
+        abastecimento_value = worksheet.cell(
+            row=row_idx,
+            column=abastecimento_col_idx,
+        ).value
+
+        motivo_value = worksheet.cell(
+            row=row_idx,
+            column=motivo_col_idx,
+        ).value
+
+        abastecimento_tem_numero = False
+
+        if abastecimento_value is not None:
+
+            if isinstance(
+                abastecimento_value,
+                (int, float),
+            ):
+                abastecimento_tem_numero = True
+
+            elif isinstance(
+                abastecimento_value,
+                str,
+            ):
+                texto_abastecimento = (
+                    abastecimento_value
+                    .replace("R$", "")
+                    .replace(" ", "")
+                    .strip()
+                )
+
+                if texto_abastecimento:
+                    abastecimento_tem_numero = bool(
+                        re.search(
+                            r"\d",
+                            texto_abastecimento,
+                        )
+                    )
+
+        if (
+            abastecimento_tem_numero
+            and not motivo_indica_abastecimento(
+                motivo_value
+            )
+        ):
+            worksheet.cell(
+                row=row_idx,
+                column=motivo_col_idx,
+            ).fill = yellow_fill
 
     # -------------------------------------------------------------
     # 3. AJUSTAR LARGURA DAS COLUNAS
