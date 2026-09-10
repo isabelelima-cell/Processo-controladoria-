@@ -930,6 +930,7 @@ def dataframe_to_excel_bytes(
             writer,
             index=False,
             sheet_name="Resumo Geral",
+            startrow=1,
         )
 
     output.seek(0)
@@ -947,11 +948,11 @@ def dataframe_to_excel_bytes(
     ]
 
     # Congelar cabeçalho
-    worksheet.freeze_panes = "A2"
+    worksheet.freeze_panes = "A3"
 
     # Filtro automático
     worksheet.auto_filter.ref = (
-        worksheet.dimensions
+        f"A2:{get_column_letter(worksheet.max_column)}{worksheet.max_row}"
     )
 
     # Formatação do cabeçalho
@@ -965,7 +966,7 @@ def dataframe_to_excel_bytes(
         bold=True,
     )
 
-    for cell in worksheet[1]:
+    for cell in worksheet[2]:
 
         cell.fill = header_fill
         cell.font = header_font
@@ -1001,7 +1002,7 @@ def dataframe_to_excel_bytes(
     )
 
     for row_idx in range(
-        2,
+        3,
         worksheet.max_row + 1,
     ):
 
@@ -1054,6 +1055,32 @@ def dataframe_to_excel_bytes(
                 row=row_idx,
                 column=motivo_col_idx,
             ).fill = yellow_fill
+
+    # -------------------------------------------------------------
+    # FORMATAR DATAS COMO DD/MM/AAAA
+    # -------------------------------------------------------------
+
+    for date_column_name in [
+        "EMISSÃO",
+        "VENCIMENTO",
+    ]:
+
+        date_col_idx = OUTPUT_COLUMNS.index(
+            date_column_name
+        ) + 1
+
+        for row_idx in range(
+            3,
+            worksheet.max_row + 1,
+        ):
+
+            cell = worksheet.cell(
+                row=row_idx,
+                column=date_col_idx,
+            )
+
+            if cell.value is not None:
+                cell.number_format = "DD/MM/YYYY"
 
     # -------------------------------------------------------------
     # 3. AJUSTAR LARGURA DAS COLUNAS
@@ -1794,6 +1821,7 @@ def process_accounting_sheet(
         ) in {
             normalize_text("OBSERVAÇÃO"),
             normalize_text("OBSERVACAO"),
+            normalize_text("OBS"),
         }:
             observation_existing = column
             break
@@ -1841,6 +1869,14 @@ def process_accounting_sheet(
                 row_index
             )
 
+        else:
+            # Linhas ignoradas pela regra de O.S. permanecem
+            # no arquivo, mas são identificadas como não conferidas.
+            df.at[
+                row_index,
+                conference_column,
+            ] = "NÃO CONFERIDO"
+
     # Estilos:
     # row_status: "red" ou None
     # observation_fill: "yellow" / "blue" / None
@@ -1855,6 +1891,7 @@ def process_accounting_sheet(
     stats = {
         "os_analisadas": 0,
         "conferidas": 0,
+        "divergencias": 0,
         "nao_conferidas": 0,
         "linhas_nao_os": sum(
             1
@@ -1907,12 +1944,6 @@ def process_accounting_sheet(
                     note,
                 )
 
-                row_styles[
-                    index
-                ][
-                    "row_fill"
-                ] = "red"
-
             stats[
                 "nao_conferidas"
             ] += 1
@@ -1948,12 +1979,6 @@ def process_accounting_sheet(
                     ],
                     note,
                 )
-
-                row_styles[
-                    index
-                ][
-                    "row_fill"
-                ] = "red"
 
             stats[
                 "nao_conferidas"
@@ -2230,7 +2255,7 @@ def process_accounting_sheet(
                 df.at[
                     index,
                     conference_column,
-                ] = "NÃO CONFERIDO"
+                ] = "DIVERGÊNCIA"
 
                 df.at[
                     index,
@@ -2250,20 +2275,113 @@ def process_accounting_sheet(
                 ] = "red"
 
             stats[
-                "nao_conferidas"
+                "divergencias"
             ] += 1
+
+    # -------------------------------------------------------------
+    # ORDENAR AS COLUNAS DA SAÍDA CONTÁBIL
+    # -------------------------------------------------------------
+
+    ordered_df = pd.DataFrame(
+        index=df.index
+    )
+
+    ordered_df["CONFERENCIA"] = df[
+        conference_column
+    ]
+
+    for logical_name, output_name in [
+        ("DATA", "DATA"),
+        ("HISTORICO", "HISTORICO"),
+        ("CONTA", "CONTA"),
+        ("CODIGO", "CODIGO"),
+        ("DESCRIÇÃO", "DESCRIÇÃO"),
+    ]:
+
+        source_column = column_map.get(
+            logical_name
+        )
+
+        if (
+            source_column is not None
+            and source_column in df.columns
+        ):
+            ordered_df[
+                output_name
+            ] = df[
+                source_column
+            ]
+        else:
+            ordered_df[
+                output_name
+            ] = ""
+
+    ordered_df["VENCIMENTO"] = df[
+        vencimento_column
+    ]
+
+    source_custo = column_map.get(
+        "C.CUSTO"
+    )
+
+    if (
+        source_custo is not None
+        and source_custo in df.columns
+    ):
+        ordered_df[
+            "C.CUSTO"
+        ] = df[
+            source_custo
+        ]
+    else:
+        ordered_df[
+            "C.CUSTO"
+        ] = ""
+
+    ordered_df["Débito"] = df[
+        debit_column
+    ]
+
+    ordered_df["Crédito"] = df[
+        credit_column
+    ]
+
+    ordered_df["SALDO"] = df[
+        saldo_column
+    ]
+
+    ordered_df["OBS"] = df[
+        observation_column
+    ]
+
+    df = ordered_df[
+        [
+            "CONFERENCIA",
+            "DATA",
+            "HISTORICO",
+            "CONTA",
+            "CODIGO",
+            "DESCRIÇÃO",
+            "VENCIMENTO",
+            "C.CUSTO",
+            "Débito",
+            "Crédito",
+            "SALDO",
+            "OBS",
+        ]
+    ].copy()
 
     return (
         df,
         row_styles,
         stats,
         {
-            "conference_column": conference_column,
-            "vencimento_column": vencimento_column,
-            "observation_column": observation_column,
-            "debit_column": debit_column,
-            "credit_column": credit_column,
-            "saldo_column": saldo_column,
+            "conference_column": "CONFERENCIA",
+            "vencimento_column": "VENCIMENTO",
+            "observation_column": "OBS",
+            "debit_column": "Débito",
+            "credit_column": "Crédito",
+            "saldo_column": "SALDO",
         },
     )
 
@@ -2277,7 +2395,7 @@ def style_accounting_output_sheet(
     """
     Formata a aba contábil final.
 
-    Linha 1: subtotais.
+    Linha 1: livre para subtotal manual.
     Linha 2: cabeçalhos.
     Linha 3 em diante: dados.
     """
@@ -2289,15 +2407,6 @@ def style_accounting_output_sheet(
 
     header_font = Font(
         color="FFFFFF",
-        bold=True,
-    )
-
-    subtotal_fill = PatternFill(
-        fill_type="solid",
-        fgColor="D9EAF7",
-    )
-
-    subtotal_font = Font(
         bold=True,
     )
 
@@ -2330,63 +2439,8 @@ def style_accounting_output_sheet(
         )
 
     # -------------------------------------------------------------
-    # SUBTOTAIS NA LINHA 1
+    # LINHA 1 FICA LIVRE PARA PREENCHIMENTO MANUAL
     # -------------------------------------------------------------
-
-    ws.cell(
-        row=1,
-        column=1,
-        value="SUBTOTAL GERAL",
-    )
-
-    ws.cell(
-        row=1,
-        column=1,
-    ).fill = subtotal_fill
-
-    ws.cell(
-        row=1,
-        column=1,
-    ).font = subtotal_font
-
-    for logical_name in [
-        "debit_column",
-        "credit_column",
-        "saldo_column",
-    ]:
-
-        column_name = metadata.get(
-            logical_name
-        )
-
-        if column_name is None:
-            continue
-
-        column_index = (
-            list(df.columns).index(
-                column_name
-            )
-            + 1
-        )
-
-        total = sum(
-            to_number(value)
-            for value in df[
-                column_name
-            ].tolist()
-        )
-
-        cell = ws.cell(
-            row=1,
-            column=column_index,
-            value=clean_calculated_number(
-                total
-            ),
-        )
-
-        cell.fill = subtotal_fill
-        cell.font = subtotal_font
-        cell.number_format = '#,##0.00'
 
     # -------------------------------------------------------------
     # CORES DA CONFERÊNCIA
@@ -2444,6 +2498,38 @@ def style_accounting_output_sheet(
                     row=excel_row,
                     column=observation_column_index,
                 ).fill = blue_fill
+
+    # -------------------------------------------------------------
+    # FORMATAR DATAS COMO DD/MM/AAAA
+    # -------------------------------------------------------------
+
+    for date_column_name in [
+        "DATA",
+        "VENCIMENTO",
+    ]:
+
+        if date_column_name not in df.columns:
+            continue
+
+        date_column_index = (
+            list(df.columns).index(
+                date_column_name
+            )
+            + 1
+        )
+
+        for excel_row in range(
+            3,
+            ws.max_row + 1,
+        ):
+
+            cell = ws.cell(
+                row=excel_row,
+                column=date_column_index,
+            )
+
+            if cell.value is not None:
+                cell.number_format = "DD/MM/YYYY"
 
     # -------------------------------------------------------------
     # APRESENTAÇÃO
@@ -2529,6 +2615,7 @@ def process_accounting_workbook(
     totals = {
         "os_analisadas": 0,
         "conferidas": 0,
+        "divergencias": 0,
         "nao_conferidas": 0,
         "linhas_nao_os": 0,
     }
@@ -2976,7 +3063,7 @@ with st.expander(
     st.markdown(
         """
 - Só são analisadas linhas cujo `HISTORICO` começa com `OS.3` (ou `O.S.3`) seguido da numeração da O.S.
-- Linhas que não são O.S. permanecem no arquivo, mas não recebem conferência automática.
+- Linhas que não são O.S. permanecem no arquivo e ficam como `NÃO CONFERIDO`.
 - A numeração é procurada na coluna `O.S VIAG` do consolidado.
 - Se a O.S. não existir ou aparecer mais de uma vez no consolidado, ela fica `NÃO CONFERIDO`.
 - A soma de `DÉBITO` da O.S. deve ser igual a `FRETE SEM DESCONTO`.
@@ -2984,10 +3071,10 @@ with st.expander(
 - A soma de `SALDO` deve ser igual a `TOTAL COM DESCONTO`.
 - Crédito igual ao valor de `ABASTECIMENTO`: observação de combustível em **amarelo**.
 - Crédito igual ao valor de `DESCONTO`: observação de avarias em **azul-claro**.
-- Qualquer divergência deixa todas as linhas daquela O.S. em **vermelho-claro** e informa o valor divergente.
-- `CONFERÊNCIA` é adicionada como primeira coluna.
+- Qualquer divergência deixa todas as linhas daquela O.S. em **vermelho-claro**, informa o valor divergente e marca `DIVERGÊNCIA` na coluna `CONFERENCIA`.
+- `CONFERENCIA` é adicionada como primeira coluna.
 - `VENCIMENTO` é preenchido a partir do consolidado.
-- A linha acima do cabeçalho recebe os subtotais gerais de `DÉBITO`, `CRÉDITO` e `SALDO`.
+- A linha acima do cabeçalho fica **livre** para você inserir os subtotais manualmente.
         """
     )
 
@@ -3142,8 +3229,8 @@ if "accounting_excel" in st.session_state:
         ]
     )
 
-    col1, col2, col3, col4 = st.columns(
-        4
+    col1, col2, col3, col4, col5 = st.columns(
+        5
     )
 
     col1.metric(
@@ -3161,13 +3248,20 @@ if "accounting_excel" in st.session_state:
     )
 
     col3.metric(
+        "Divergências",
+        accounting_totals[
+            "divergencias"
+        ],
+    )
+
+    col4.metric(
         "Não conferidas",
         accounting_totals[
             "nao_conferidas"
         ],
     )
 
-    col4.metric(
+    col5.metric(
         "Linhas não-O.S.",
         accounting_totals[
             "linhas_nao_os"
