@@ -1871,7 +1871,7 @@ def process_accounting_sheet(
 
         else:
             # Linhas ignoradas pela regra de O.S. permanecem
-            # no arquivo, mas são identificadas como não conferidas.
+            # no arquivo e são identificadas como não conferidas.
             df.at[
                 row_index,
                 conference_column,
@@ -1887,6 +1887,16 @@ def process_accounting_sheet(
         }
         for index in df.index
     }
+
+    # Linhas que não são O.S. são NÃO CONFERIDO
+    # e ficam inteiramente em vermelho-claro.
+    for index, os_id in os_by_index.items():
+        if not os_id:
+            row_styles[
+                index
+            ][
+                "row_fill"
+            ] = "red"
 
     stats = {
         "os_analisadas": 0,
@@ -1931,7 +1941,7 @@ def process_accounting_sheet(
                 df.at[
                     index,
                     conference_column,
-                ] = "NÃO CONFERIDO"
+                ] = "NÃO ENCONTRADO"
 
                 df.at[
                     index,
@@ -1943,6 +1953,12 @@ def process_accounting_sheet(
                     ],
                     note,
                 )
+
+                row_styles[
+                    index
+                ][
+                    "row_fill"
+                ] = "red"
 
             stats[
                 "nao_conferidas"
@@ -1979,6 +1995,12 @@ def process_accounting_sheet(
                     ],
                     note,
                 )
+
+                row_styles[
+                    index
+                ][
+                    "row_fill"
+                ] = "red"
 
             stats[
                 "nao_conferidas"
@@ -3063,9 +3085,9 @@ with st.expander(
     st.markdown(
         """
 - Só são analisadas linhas cujo `HISTORICO` começa com `OS.3` (ou `O.S.3`) seguido da numeração da O.S.
-- Linhas que não são O.S. permanecem no arquivo e ficam como `NÃO CONFERIDO`.
+- Linhas que não são O.S. permanecem no arquivo, ficam como `NÃO CONFERIDO` e são destacadas em vermelho-claro.
 - A numeração é procurada na coluna `O.S VIAG` do consolidado.
-- Se a O.S. não existir ou aparecer mais de uma vez no consolidado, ela fica `NÃO CONFERIDO`.
+- Se a O.S. não existir no consolidado, ela fica `NÃO ENCONTRADO` e a linha inteira é destacada em vermelho-claro. Se aparecer mais de uma vez, fica `NÃO CONFERIDO` e também em vermelho-claro.
 - A soma de `DÉBITO` da O.S. deve ser igual a `FRETE SEM DESCONTO`.
 - A soma de `CRÉDITO` deve ser igual a `|ABASTECIMENTO| + |DESCONTO|`.
 - A soma de `SALDO` deve ser igual a `TOTAL COM DESCONTO`.
